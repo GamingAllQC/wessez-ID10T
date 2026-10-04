@@ -11,6 +11,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.ItemStack;
 import net.wessez.Wessez;
+import net.fabricmc.fabric.api.screenhandler.v1.ExtendedScreenHandlerFactory;
 
 import java.io.File;
 import java.io.FileReader;
@@ -22,38 +23,27 @@ public class BaltopScreenHandler extends AbstractContainerMenu {
     private final List<Map.Entry<String, Double>> topBalances;
     private static Map<UUID, String> nameCache = new HashMap<>();
 
-    public BaltopScreenHandler(int syncId, Inventory playerInventory) {
+    /** Server-side constructor — receives data from the factory. */
+    public BaltopScreenHandler(int syncId, Inventory playerInventory, BaltopScreenData data) {
         super(Wessez.BALTOP_SCREEN_HANDLER, syncId);
-
-        // Load name cache from usercache.json if not loaded
-        if (nameCache.isEmpty()) {
-            loadNameCache();
-        }
-
-        // Get the top balances and convert UUID keys to player names
-        this.topBalances = Wessez.getEconomyData().getTopBalances(10).stream()
-                .map(entry -> {
-                    String playerName = getPlayerName(entry.getKey());
-                    return new AbstractMap.SimpleEntry<>(playerName, entry.getValue());
-                })
-                .collect(Collectors.toList());
+        this.topBalances = new ArrayList<>(data.balances().entrySet());
     }
 
+    /** Client-side constructor — called by the registered factory with an empty data shell.
+     *  Real data arrives via the ExtendedScreenHandlerType codec. */
+    public BaltopScreenHandler(int syncId, Inventory playerInventory) {
+        super(Wessez.BALTOP_SCREEN_HANDLER, syncId);
+        this.topBalances = new ArrayList<>();
+    }
+
+    // ── Name resolution helpers ──────────────────────────────────────────────
+
     private static String getPlayerName(UUID uuid) {
-        // Try online players first
         if (Wessez.getServer() != null) {
-            ServerPlayer onlinePlayer = Wessez.getServer().getPlayerList().getPlayer(uuid);
-            if (onlinePlayer != null) {
-                return onlinePlayer.getName().getString();
-            }
+            ServerPlayer online = Wessez.getServer().getPlayerList().getPlayer(uuid);
+            if (online != null) return online.getName().getString();
         }
-
-        // Try cache
-        if (nameCache.containsKey(uuid)) {
-            return nameCache.get(uuid);
-        }
-
-        // Fallback to shortened UUID
+        if (nameCache.containsKey(uuid)) return nameCache.get(uuid);
         return "§7" + uuid.toString().substring(0, 8);
     }
 
@@ -64,36 +54,59 @@ public class BaltopScreenHandler extends AbstractContainerMenu {
                 Wessez.LOGGER.warn("usercache.json not found");
                 return;
             }
-
-            FileReader reader = new FileReader(usercacheFile);
-            JsonElement jsonElement = JsonParser.parseReader(reader);
-
-            if (jsonElement.isJsonArray()) {
-                for (JsonElement element : jsonElement.getAsJsonArray()) {
-                    if (element.isJsonObject()) {
-                        JsonObject profile = element.getAsJsonObject();
-
-                        if (profile.has("uuid") && profile.has("name")) {
-                            String uuidStr = profile.get("uuid").getAsString();
-                            String name = profile.get("name").getAsString();
-
-                            try {
-                                UUID uuid = UUID.fromString(uuidStr);
-                                nameCache.put(uuid, name);
-                            } catch (IllegalArgumentException e) {
-                                // Invalid UUID format, skip
+            try (FileReader reader = new FileReader(usercacheFile)) {
+                JsonElement jsonElement = JsonParser.parseReader(reader);
+                if (jsonElement.isJsonArray()) {
+                    for (JsonElement element : jsonElement.getAsJsonArray()) {
+                        if (element.isJsonObject()) {
+                            JsonObject profile = element.getAsJsonObject();
+                            if (profile.has("uuid") && profile.has("name")) {
+                                try {
+                                    UUID uuid = UUID.fromString(profile.get("uuid").getAsString());
+                                    nameCache.put(uuid, profile.get("name").getAsString());
+                                } catch (IllegalArgumentException ignored) {}
                             }
                         }
                     }
                 }
-                Wessez.LOGGER.info("Loaded {} player names from usercache.json", nameCache.size());
             }
-
-            reader.close();
+            Wessez.LOGGER.info("Loaded {} player names from usercache.json", nameCache.size());
         } catch (Exception e) {
             Wessez.LOGGER.error("Failed to load usercache.json", e);
         }
     }
+
+    // ── Screen opening ───────────────────────────────────────────────────────
+
+    public static void openScreen(ServerPlayer player) {
+        if (nameCache.isEmpty()) loadNameCache();
+
+        // Build data map (top 50, name-keyed)
+        Map<String, Double> balances = new LinkedHashMap<>();
+        Wessez.getEconomyData().getTopBalances(50).forEach(entry ->
+                balances.put(getPlayerName(entry.getKey()), entry.getValue()));
+
+        BaltopScreenData screenData = new BaltopScreenData(balances);
+
+        player.openMenu(new ExtendedScreenHandlerFactory<BaltopScreenData>() {
+            @Override
+            public BaltopScreenData getScreenOpeningData(ServerPlayer p) {
+                return screenData;
+            }
+
+            @Override
+            public Component getDisplayName() {
+                return Component.literal("§6§lBalance Top");
+            }
+
+            @Override
+            public AbstractContainerMenu createMenu(int syncId, Inventory inv, Player p) {
+                return new BaltopScreenHandler(syncId, inv, screenData);
+            }
+        });
+    }
+
+    // ── Container contract ───────────────────────────────────────────────────
 
     @Override
     public ItemStack quickMoveStack(Player player, int index) {
@@ -107,19 +120,5 @@ public class BaltopScreenHandler extends AbstractContainerMenu {
 
     public List<Map.Entry<String, Double>> getTopBalances() {
         return topBalances;
-    }
-
-    public static void openScreen(ServerPlayer player) {
-        player.openMenu(new MenuProvider() {
-            @Override
-            public Component getDisplayName() {
-                return Component.literal("§6§lBalance Top");
-            }
-
-            @Override
-            public AbstractContainerMenu createMenu(int syncId, Inventory inv, Player p) {
-                return new BaltopScreenHandler(syncId, inv);
-            }
-        });
     }
 }

@@ -65,12 +65,11 @@ public class BaltopScreen extends AbstractContainerScreen<BaltopScreenHandler> {
         graphics.drawString(font, footer, x + 20, y + imageHeight - 15, 0xFFAAAAAA, false);
     }
 
-    // Removed @Override - method signature might differ in 1.21.1
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         List<Map.Entry<String, Double>> balances = menu.getTopBalances();
-
         int maxScroll = Math.max(0, balances.size() - 14);
-        if (delta > 0) {
+        if (scrollY > 0) {
             scrollOffset = Math.max(0, scrollOffset - 2);
         } else {
             scrollOffset = Math.min(maxScroll, scrollOffset + 2);

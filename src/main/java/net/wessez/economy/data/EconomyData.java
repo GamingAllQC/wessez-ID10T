@@ -16,6 +16,7 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import java.util.Collections;
 
 public class EconomyData {
     private static final Logger LOGGER = LoggerFactory.getLogger("WessezEconomy");
@@ -25,10 +26,10 @@ public class EconomyData {
     private final Map<UUID, Long> dailySessionTime = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastDailyReset = new ConcurrentHashMap<>();
     private final Map<UUID, Long> lastDailyClaim = new ConcurrentHashMap<>();
-    public final Map<UUID, Long> sessionStartTime = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> sessionStartTime = new ConcurrentHashMap<>();
 
     public void ensurePlayerExists(UUID uuid) {
-        balances.putIfAbsent(uuid, 0.0);
+        balances.putIfAbsent(uuid, net.wessez.economy.config.Config.getStartingBalance());
         totalOnlineTime.putIfAbsent(uuid, 0L);
         dailySessionTime.putIfAbsent(uuid, 0L);
         lastDailyReset.putIfAbsent(uuid, System.currentTimeMillis());
@@ -169,6 +170,10 @@ public class EconomyData {
     public void setLastDailyClaim(UUID uuid, long timestamp) {
         ensurePlayerExists(uuid);
         lastDailyClaim.put(uuid, timestamp);
+    }
+
+    public Set<UUID> getActiveSessions() {
+        return Collections.unmodifiableSet(sessionStartTime.keySet());
     }
 
     public List<Map.Entry<UUID, Double>> getTopBalances(int limit) {
